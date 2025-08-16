@@ -1,0 +1,11 @@
+[server]
+port = ":8080"
+read_timeout = 20
+write_timeout = 20
+
+[s3]
+region = "eu-west-1"
+bucket = "static.domain.com"
+access_key = "access_key_here"
+secret_access_key = "secret_access_key_here"
+
