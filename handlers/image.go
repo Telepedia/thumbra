@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -51,7 +52,6 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 	}
 
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Thumbnailer", "Thumbra")
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(imageData)))
 	w.Write(imageData)
 }
