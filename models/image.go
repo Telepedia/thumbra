@@ -34,3 +34,10 @@ type ImageResponse struct {
 func (ir *ImageRequest) GetS3Key() string {
 	return fmt.Sprintf("%s/%s/%s/%s", ir.Wiki, ir.Hash1, ir.Hash2, ir.Filename)
 }
+
+// Helper to convert the URL into a S3 path, taking into account files will
+// be stored in the archive table for revisions, and have names like TIMESTAMP!FILENAME.EXT
+func (ir *ImageRequest) GetArchiveKey() string {
+	filename := ir.Revision + "!" + ir.Filename
+	return fmt.Sprintf("%s/archives/%s/%s/%s", ir.Wiki, ir.Hash1, ir.Hash2, filename)
+}
