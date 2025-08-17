@@ -2,6 +2,8 @@
 
 It is currently in development, aimed to replace the MediaWiki thumb generator (`thumb.php`) with a more robust implementation - and nicer human-readable URLs. It also allows for generating thumbnails on the fly with different options.
 
+**Note:** Thumbra does not handle deleted files. These should never be publicly visible - MediaWiki handles moving these to-and-from the `deleted` zone when they are deleted or undeleted. They should not be publicly visible.
+
 ## Why?
 MediaWiki's default URL structure - taking into account Telepedia uses S3 - is such that the URLs end up to be `/{wiki}/{hash1}/{hash2}/{fileName}`, this is fine. 
 
