@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/telepedia/thumbra/models"
@@ -37,6 +37,8 @@ func (h *ImageHandler) ServeOriginal(w http.ResponseWriter, r *http.Request) {
 	h.serveImage(w, r, req)
 }
 
+// Actually return the image back to the caller (either by signaling that the browsers copy
+// is fine to use), or by retrieving it from S3
 func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req models.ImageRequest) {
 	// validate that the request URL was actually valid
 	err := utils.ValidateImageRequest(req)
@@ -45,13 +47,69 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 		return
 	}
 
-	imageData, contentType, err := h.imageService.GetOriginalImage(req)
+	// here we conditionally check the metadata such as etag, last modified
+	metadata, err := h.imageService.GetImageMetadata(req)
 	if err != nil {
+		if err == services.ErrImageNotFound {
+			http.Error(w, "Image not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to retrieve image metadata", http.StatusInternalServerError)
+		return
+	}
+
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if ifNoneMatch == metadata.ETag || ifNoneMatch == "*" {
+			if metadata.ETag != "" {
+				w.Header().Set("ETag", metadata.ETag)
+			}
+			if !metadata.LastModified.IsZero() {
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+			}
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	if ifModSince := r.Header.Get("If-Modified-Since"); ifModSince != "" {
+		if t, err := http.ParseTime(ifModSince); err == nil {
+			if !metadata.LastModified.IsZero() && !metadata.LastModified.After(t) {
+				if metadata.ETag != "" {
+					w.Header().Set("ETag", metadata.ETag)
+				}
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+
+	// if we got here, we need to get the image from S3 and return it (either
+	// expired or we fucked up!)
+	obj, err := h.imageService.GetOriginalImage(req)
+	if err != nil {
+		if err == services.ErrImageNotFound {
+			http.Error(w, "Image not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(imageData)))
-	w.Write(imageData)
+	// set headers - note we don't need to set the cache-control as the middleware
+	// handles that
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.Length, 10))
+
+	if obj.ETag != "" {
+		w.Header().Set("ETag", obj.ETag)
+	}
+	if obj.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", obj.ContentDisposition)
+	}
+	if !obj.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
+	}
+
+	_, _ = w.Write(obj.Data)
 }
