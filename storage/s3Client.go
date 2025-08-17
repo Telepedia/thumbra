@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"io"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -14,14 +16,18 @@ type S3Client struct {
 	Bucket string
 }
 
-func New(cfg *config.Config) *S3Client {
+var (
+	ErrObjectNotFound = fmt.Errorf("object not found")
+)
+
+func New(cfg config.S3Config) *S3Client {
 	awsCfg, err := awsconfig.LoadDefaultConfig(
 		context.TODO(),
-		awsconfig.WithRegion(cfg.S3.Region),
+		awsconfig.WithRegion(cfg.Region),
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(
-				cfg.S3.AccessKey,
-				cfg.S3.SecretKey,
+				cfg.AccessKey,
+				cfg.SecretKey,
 				"",
 			),
 		),
@@ -34,6 +40,28 @@ func New(cfg *config.Config) *S3Client {
 
 	return &S3Client{
 		S3:     s3Client,
-		Bucket: cfg.S3.Bucket,
+		Bucket: cfg.Bucket,
 	}
+}
+
+func (s *S3Client) GetObject(ctx context.Context, key string) ([]byte, string, error) {
+	input := &s3.GetObjectInput{
+		Bucket: &s.Bucket,
+		Key:    &key,
+	}
+
+	result, err := s.S3.GetObject(ctx, input)
+	if err != nil {
+		return nil, "", err
+	}
+
+	defer result.Body.Close()
+
+	data, err := io.ReadAll(result.Body)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := *result.ContentType
+	return data, contentType, nil
 }
