@@ -39,5 +39,5 @@ func (ir *ImageRequest) GetS3Key() string {
 // be stored in the archive table for revisions, and have names like TIMESTAMP!FILENAME.EXT
 func (ir *ImageRequest) GetArchiveKey() string {
 	filename := ir.Revision + "!" + ir.Filename
-	return fmt.Sprintf("%s/archives/%s/%s/%s", ir.Wiki, ir.Hash1, ir.Hash2, filename)
+	return fmt.Sprintf("%s/archive/%s/%s/%s", ir.Wiki, ir.Hash1, ir.Hash2, filename)
 }

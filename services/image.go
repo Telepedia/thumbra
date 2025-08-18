@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/telepedia/thumbra/models"
@@ -25,7 +26,14 @@ func (is *ImageService) GetOriginalImage(req models.ImageRequest) (*models.Image
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	s3Key := req.GetS3Key()
+	var s3Key string
+
+	if req.Revision == "latest" {
+		s3Key = req.GetS3Key()
+	} else {
+		s3Key = req.GetArchiveKey()
+	}
+
 	obj, err := is.s3Client.GetObject(ctx, s3Key)
 	if err != nil {
 		if err == storage.ErrObjectNotFound {
@@ -41,7 +49,15 @@ func (is *ImageService) GetImageMetadata(req models.ImageRequest) (*models.Image
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	s3Key := req.GetS3Key()
+	var s3Key string
+
+	if req.Revision == "latest" {
+		s3Key = req.GetS3Key()
+	} else {
+		s3Key = req.GetArchiveKey()
+		log.Println("S3Key", s3Key)
+	}
+
 	metadata, err := is.s3Client.HeadObject(ctx, s3Key)
 	if err != nil {
 		if err == storage.ErrObjectNotFound {
