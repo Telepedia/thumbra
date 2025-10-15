@@ -45,6 +45,7 @@ func New(cfg config.S3Config) *S3Client {
 	}
 }
 
+// Get an object from S3 returning the metadata about the file, or an error
 func (s *S3Client) GetObject(ctx context.Context, key string) (*models.ImageResponse, error) {
 	input := &s3.GetObjectInput{
 		Bucket: &s.Bucket,
