@@ -13,4 +13,7 @@ func SetupRoutes(r *mux.Router, s3Client *storage.S3Client) {
 
 	r.HandleFunc("/{wiki}/{hash1}/{hash2}/{filename}/revision/{revision}",
 		imageHandler.ServeOriginal).Methods("GET")
+
+	r.HandleFunc("/{wiki}/{hash1}/{hash2}/{filename}/revision/{revision}/scale-to-width/{width}",
+		imageHandler.ServeThumbnail).Methods("GET")
 }

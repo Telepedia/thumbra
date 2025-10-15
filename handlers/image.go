@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -23,6 +24,7 @@ func NewImageHandler(s3Client *storage.S3Client) *ImageHandler {
 	}
 }
 
+// Serve the original image back to the caller
 func (h *ImageHandler) ServeOriginal(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
@@ -112,4 +114,70 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 	}
 
 	_, _ = w.Write(obj.Data)
+}
+
+// Serve the original thumbnail back to the caller, generating it if it doesn't exist
+func (h *ImageHandler) ServeThumbnail(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+
+	req := models.ThumbnailRequest{
+		Wiki:     vars["wiki"],
+		Hash1:    vars["hash1"],
+		Hash2:    vars["hash2"],
+		Filename: vars["filename"],
+		Revision: vars["revision"],
+		Width:    vars["width"],
+	}
+
+	h.serveThumbnail(w, r, req)
+}
+
+// Check if the requested thumbnail exists in S3, if so, return it. If it doesn't exist, attempt to scale
+// it, store it in S3, and return it
+func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, req models.ThumbnailRequest) {
+	// validate that the request URL was actually valid
+	err := utils.ValidateThumbnailRequest(req)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	metadata, err := h.imageService.GetThumbnailMetadata(req)
+	if err != nil {
+		if errors.Is(err, services.ErrImageNotFound) {
+			// no thumbnail exists
+			// @TODO: short circuit and generate the thumbnail when I can be bothered to implement that
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if ifNoneMatch == metadata.ETag || ifNoneMatch == "*" {
+			if metadata.ETag != "" {
+				w.Header().Set("ETag", metadata.ETag)
+			}
+			if !metadata.LastModified.IsZero() {
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+			}
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	if ifModSince := r.Header.Get("If-Modified-Since"); ifModSince != "" {
+		if t, err := http.ParseTime(ifModSince); err == nil {
+			if !metadata.LastModified.IsZero() && !metadata.LastModified.After(t) {
+				if metadata.ETag != "" {
+					w.Header().Set("ETag", metadata.ETag)
+				}
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+
 }
