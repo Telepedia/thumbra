@@ -16,6 +16,7 @@ var (
 	ErrInvalidHeight   = fmt.Errorf("invalid height")
 )
 
+// validate that the request is valid and correctly formed
 func ValidateImageRequest(req models.ImageRequest) error {
 	if req.Wiki == "" {
 		return ErrInvalidWiki
@@ -43,6 +44,9 @@ func ValidateImageRequest(req models.ImageRequest) error {
 	return nil
 }
 
+// validate that a request to get a thumbnail is valid and correctly formed
+// it will need to contain the width - the height is currently not supported as the image will be scaled
+// and the aspect ratio retained
 func ValidateThumbnailRequest(req models.ThumbnailRequest) error {
 	if req.Wiki == "" {
 		return ErrInvalidWiki
