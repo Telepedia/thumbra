@@ -180,4 +180,33 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
+	// not a 304, but the thumbnail exists so, lets return it!
+	obj, err := h.imageService.GetThumbnail(req)
+
+	if err != nil {
+		if err == services.ErrImageNotFound {
+			http.Error(w, "Image not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
+		return
+	}
+
+	// set headers - note we don't need to set the cache-control as the middleware
+	// handles that
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.Length, 10))
+
+	if obj.ETag != "" {
+		w.Header().Set("ETag", obj.ETag)
+	}
+	if obj.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", obj.ContentDisposition)
+	}
+	if !obj.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
+	}
+
+	_, _ = w.Write(obj.Data)
+
 }
