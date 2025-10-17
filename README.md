@@ -2,6 +2,8 @@
 
 It is currently in development, aimed to replace the MediaWiki thumb generator (`thumb.php`) with a more robust implementation - and nicer human-readable URLs. It also allows for generating thumbnails on the fly with different options.
 
+This has not been benchmarked against `thumb.php` but theoretically it should be significantly faster - maybe some day we will insert some metrics here, but then again maybe we will not :) 
+
 **Note:** Thumbra does not handle deleted files. These should never be publicly visible - MediaWiki handles moving these to-and-from the `deleted` zone when they are deleted or undeleted. They should not be publicly visible.
 
 ## Why?
