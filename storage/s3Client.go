@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -118,4 +119,22 @@ func (s *S3Client) HeadObject(ctx context.Context, key string) (*models.ImageRes
 	}
 
 	return resp, nil
+}
+
+// Put an object (thumb) into S3, mainly a wrapper around the existing s3 client
+func (s *S3Client) PutObject(ctx context.Context, key string, data []byte, contentType string) error {
+	input := &s3.PutObjectInput{
+		Bucket:      &s.Bucket,
+		Key:         &key,
+		Body:        bytes.NewReader(data),
+		ContentType: &contentType,
+		ACL:         "public-read",
+	}
+
+	_, err := s.S3.PutObject(ctx, input)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

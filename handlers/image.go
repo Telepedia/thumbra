@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -147,8 +148,65 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 	if err != nil {
 		if errors.Is(err, services.ErrImageNotFound) {
 			// no thumbnail exists
-			// @TODO: short circuit and generate the thumbnail when I can be bothered to implement that
-			return
+			// fetch the original image to generate the thumbnail
+			model := models.ImageRequest{
+				Wiki:     req.Wiki,
+				Hash1:    req.Hash1,
+				Hash2:    req.Hash2,
+				Filename: req.Filename,
+				Revision: req.Revision,
+			}
+
+			obj, err := h.imageService.GetOriginalImage(model)
+			if err != nil {
+				if err == services.ErrImageNotFound {
+					http.Error(w, "Image not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
+				return
+			}
+
+			// here we pass the original image to the thumbnail generator, and the requested model
+			// this function saves the thumbnail to the temp dir and returns the path. It is this functions
+			// responsibility to upload the thumbnail to S3
+			path, err := h.imageService.ThumbnailImage(req, obj)
+			if err != nil {
+				http.Error(w, "Failed to generate thumbnail", http.StatusInternalServerError)
+				return
+			}
+			// delete temp file when this func finishes
+			// @TODO: this is a rough draft - we need to handle this better and split out a lot of
+			// this into utility functions, but also remove a lot of the duplicated code
+			defer os.Remove(path)
+
+			// Upload the thumbnail to S3
+			err = h.imageService.UploadThumbnail(req, path)
+			if err != nil {
+				http.Error(w, "Failed to upload thumbnail", http.StatusInternalServerError)
+				return
+			}
+
+			// serve the thumbnail we just created
+			thumbObj, err := h.imageService.GetThumbnail(req)
+			if err != nil {
+				http.Error(w, "Failed to retrieve thumbnail", http.StatusInternalServerError)
+				return
+			}
+
+			// Set headers and return the thumbnail
+			w.Header().Set("Content-Type", thumbObj.ContentType)
+			w.Header().Set("Content-Length", strconv.FormatInt(thumbObj.Length, 10))
+			if thumbObj.ETag != "" {
+				w.Header().Set("ETag", thumbObj.ETag)
+			}
+			if thumbObj.ContentDisposition != "" {
+				w.Header().Set("Content-Disposition", thumbObj.ContentDisposition)
+			}
+			if !thumbObj.LastModified.IsZero() {
+				w.Header().Set("Last-Modified", thumbObj.LastModified.UTC().Format(http.TimeFormat))
+			}
+			_, _ = w.Write(thumbObj.Data)
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
