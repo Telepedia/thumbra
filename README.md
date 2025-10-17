@@ -13,7 +13,7 @@ We think that this can be cleaned up with a much nicer syntax, which is more hum
 
 ### API
 
-#### Original File (and older revisions)
+#### Full size file
 
 Getting the original file is simple, the route for this is such:
 
@@ -25,4 +25,20 @@ This assumes that your MediaWiki instance stores archives in the default place, 
 
 #### Thumbnails
 
-...to do
+### Scaled to width
+
+To get a thumbnail of a file, the route is as such 
+
+`/{wiki}/{hash1}/{hash2}/{filename}/revision/{revision}/scale-to-width/{width}`
+
+The revision, as before, accepts either `latest` or the timestamp as `YYYYMMDDHHSS`. The API will first try and return the file at that width, or if it does not exist, will thumbnail the file to that width, return it, and store it in S3. 
+
+Note: this route will refuse to upscale an image (for obvious reasons, also becasue that is what MediaWiki does natively). However, unlike MediaWiki, if the width > the original width, instead of returning an error, like MediaWiki does, the original image will be returned at the full size. This prevents broken display of images in wikis - in any case, the size of the image returned will be at least =< the size requested, so will not appear larger than requested.
+
+#### Passthrough/Supported types
+
+The API currently supports thumbnailing the following media types:
+* PNG
+* JPEG/JPG
+* WEBP
+* GIF
