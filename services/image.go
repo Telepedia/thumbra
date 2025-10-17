@@ -45,23 +45,8 @@ func (is *ImageService) GetOriginalImage(req models.ImageRequest) (*models.Image
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var s3Key string
-
-	if req.Revision == "latest" {
-		s3Key = req.GetS3Key()
-	} else {
-		s3Key = req.GetArchiveKey()
-	}
-
-	obj, err := is.s3Client.GetObject(ctx, s3Key)
-	if err != nil {
-		if err == storage.ErrObjectNotFound {
-			return nil, ErrImageNotFound
-		}
-		return nil, fmt.Errorf("failed to retrieve image from S3: %w", err)
-	}
-
-	return obj, nil
+	s3Key := is.s3KeyForImage(req)
+	return is.fetchObject(ctx, s3Key)
 }
 
 // Get the metdata about an image from S3; this can handle both archives and latest images
@@ -70,24 +55,12 @@ func (is *ImageService) GetImageMetadata(req models.ImageRequest) (*models.Image
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var s3Key string
-
-	if req.Revision == "latest" {
-		s3Key = req.GetS3Key()
-	} else {
-		s3Key = req.GetArchiveKey()
+	s3Key := is.s3KeyForImage(req)
+	if req.Revision != "latest" {
 		log.Println("S3Key", s3Key)
 	}
 
-	metadata, err := is.s3Client.HeadObject(ctx, s3Key)
-	if err != nil {
-		if err == storage.ErrObjectNotFound {
-			return nil, ErrImageNotFound
-		}
-		return nil, fmt.Errorf("failed to retrieve image metadata from S3: %w", err)
-	}
-
-	return metadata, nil
+	return is.headObjectByKey(ctx, s3Key)
 }
 
 // Get the metdata about an image from S3; this can handle both archives and latest images
@@ -104,17 +77,7 @@ func (is *ImageService) GetThumbnailMetadata(req models.ThumbnailRequest) (*mode
 		log.Println("S3Key", s3Key)
 	}
 
-	metadata, err := is.s3Client.HeadObject(ctx, s3Key)
-	if err != nil {
-		// sdk is frustrating and weird, why not just say it doesn't exists please?!!
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
-			return nil, ErrImageNotFound
-		}
-		return nil, fmt.Errorf("failed to retrieve image metadata from S3: %w", err)
-	}
-
-	return metadata, nil
+	return is.headObjectByKey(ctx, s3Key)
 }
 
 // Get the original image from S3. This is used to return the image when the user
@@ -132,15 +95,7 @@ func (is *ImageService) GetThumbnail(req models.ThumbnailRequest) (*models.Image
 		s3Key = req.GetThumbArchiveKey()
 	}
 
-	obj, err := is.s3Client.GetObject(ctx, s3Key)
-	if err != nil {
-		if err == storage.ErrObjectNotFound {
-			return nil, ErrImageNotFound
-		}
-		return nil, fmt.Errorf("failed to retrieve image from S3: %w", err)
-	}
-
-	return obj, nil
+	return is.fetchObject(ctx, s3Key)
 }
 
 // Take the original image and generate a thumbnail, storing it in the temp dir and returning the path
@@ -229,9 +184,9 @@ func (is *ImageService) UploadThumbnail(req models.ThumbnailRequest, filePath st
 	var key string
 
 	if req.Revision == "latest" {
-		key = req.GetS3ThumbKey()
+		key = is.s3KeyForThumbnail(req)
 	} else {
-		key = req.GetThumbArchiveKey()
+		key = is.s3KeyForThumbnail(req)
 	}
 
 	// Upload to S3
@@ -241,6 +196,51 @@ func (is *ImageService) UploadThumbnail(req models.ThumbnailRequest, filePath st
 	}
 
 	return nil
+}
+
+// utility function to get the S3 key for either latest or archive images
+func (is *ImageService) s3KeyForImage(req models.ImageRequest) string {
+	if req.Revision == "latest" {
+		return req.GetS3Key()
+	}
+	return req.GetArchiveKey()
+}
+
+// utility function to get the S3 key for either latest or archive thumbnails
+func (is *ImageService) s3KeyForThumbnail(req models.ThumbnailRequest) string {
+	if req.Revision == "latest" {
+		return req.GetS3ThumbKey()
+	}
+	return req.GetThumbArchiveKey()
+}
+
+// wrapper around S3 GetObject that returns errors that Thumbra can understand
+func (is *ImageService) fetchObject(ctx context.Context, key string) (*models.ImageResponse, error) {
+	obj, err := is.s3Client.GetObject(ctx, key)
+	if err != nil {
+		if err == storage.ErrObjectNotFound {
+			return nil, ErrImageNotFound
+		}
+		return nil, fmt.Errorf("failed to retrieve image from S3: %w", err)
+	}
+	return obj, nil
+}
+
+// Wrapper for S3 HeadObject to get metadata about an object
+// returns errors that Thumbra can understand (since the S3 api is weird)
+func (is *ImageService) headObjectByKey(ctx context.Context, key string) (*models.ImageResponse, error) {
+	metadata, err := is.s3Client.HeadObject(ctx, key)
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+			return nil, ErrImageNotFound
+		}
+		if err == storage.ErrObjectNotFound {
+			return nil, ErrImageNotFound
+		}
+		return nil, fmt.Errorf("failed to retrieve image metadata from S3: %w", err)
+	}
+	return metadata, nil
 }
 
 func getContentType(ext string) string {

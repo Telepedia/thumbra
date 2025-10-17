@@ -16,6 +16,17 @@ var (
 	ErrInvalidHeight   = fmt.Errorf("invalid height")
 )
 
+// Supported file extensions that can be thumbnailed
+// if we get a request for a thumbnail and the original file
+// is not in the below list, we return a placeholder
+// var supportedThumbTypes = []string{
+// 	"png",
+// 	"jpg",
+// 	"jpeg",
+// 	"gif",
+// 	"webp",
+// }
+
 // validate that the request is valid and correctly formed
 func ValidateImageRequest(req models.ImageRequest) error {
 	if req.Wiki == "" {

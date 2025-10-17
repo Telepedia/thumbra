@@ -61,30 +61,8 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 		return
 	}
 
-	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		if ifNoneMatch == metadata.ETag || ifNoneMatch == "*" {
-			if metadata.ETag != "" {
-				w.Header().Set("ETag", metadata.ETag)
-			}
-			if !metadata.LastModified.IsZero() {
-				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
-			}
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-	}
-
-	if ifModSince := r.Header.Get("If-Modified-Since"); ifModSince != "" {
-		if t, err := http.ParseTime(ifModSince); err == nil {
-			if !metadata.LastModified.IsZero() && !metadata.LastModified.After(t) {
-				if metadata.ETag != "" {
-					w.Header().Set("ETag", metadata.ETag)
-				}
-				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-		}
+	if checkConditionalGet(w, r, metadata) {
+		return
 	}
 
 	// if we got here, we need to get the image from S3 and return it (either
@@ -99,22 +77,7 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 		return
 	}
 
-	// set headers - note we don't need to set the cache-control as the middleware
-	// handles that
-	w.Header().Set("Content-Type", obj.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(obj.Length, 10))
-
-	if obj.ETag != "" {
-		w.Header().Set("ETag", obj.ETag)
-	}
-	if obj.ContentDisposition != "" {
-		w.Header().Set("Content-Disposition", obj.ContentDisposition)
-	}
-	if !obj.LastModified.IsZero() {
-		w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
-	}
-
-	_, _ = w.Write(obj.Data)
+	writeS3ObjectResponse(w, obj)
 }
 
 // Serve the original thumbnail back to the caller, generating it if it doesn't exist
@@ -195,47 +158,15 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 			}
 
 			// Set headers and return the thumbnail
-			w.Header().Set("Content-Type", thumbObj.ContentType)
-			w.Header().Set("Content-Length", strconv.FormatInt(thumbObj.Length, 10))
-			if thumbObj.ETag != "" {
-				w.Header().Set("ETag", thumbObj.ETag)
-			}
-			if thumbObj.ContentDisposition != "" {
-				w.Header().Set("Content-Disposition", thumbObj.ContentDisposition)
-			}
-			if !thumbObj.LastModified.IsZero() {
-				w.Header().Set("Last-Modified", thumbObj.LastModified.UTC().Format(http.TimeFormat))
-			}
-			_, _ = w.Write(thumbObj.Data)
+			writeS3ObjectResponse(w, thumbObj)
+			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
-		if ifNoneMatch == metadata.ETag || ifNoneMatch == "*" {
-			if metadata.ETag != "" {
-				w.Header().Set("ETag", metadata.ETag)
-			}
-			if !metadata.LastModified.IsZero() {
-				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
-			}
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-	}
-
-	if ifModSince := r.Header.Get("If-Modified-Since"); ifModSince != "" {
-		if t, err := http.ParseTime(ifModSince); err == nil {
-			if !metadata.LastModified.IsZero() && !metadata.LastModified.After(t) {
-				if metadata.ETag != "" {
-					w.Header().Set("ETag", metadata.ETag)
-				}
-				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
-				w.WriteHeader(http.StatusNotModified)
-				return
-			}
-		}
+	if checkConditionalGet(w, r, metadata) {
+		return
 	}
 
 	// not a 304, but the thumbnail exists so, lets return it!
@@ -250,8 +181,52 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
-	// set headers - note we don't need to set the cache-control as the middleware
-	// handles that
+	writeS3ObjectResponse(w, obj)
+
+}
+
+// Check whether we can send a 304 not modified response to the caller
+// instead of returning the full object from S3
+func checkConditionalGet(w http.ResponseWriter, r *http.Request, metadata *models.ImageResponse) bool {
+	if metadata == nil {
+		return false
+	}
+
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if ifNoneMatch == metadata.ETag || ifNoneMatch == "*" {
+			if metadata.ETag != "" {
+				w.Header().Set("ETag", metadata.ETag)
+			}
+			if !metadata.LastModified.IsZero() {
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+			}
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
+
+	if ifModSince := r.Header.Get("If-Modified-Since"); ifModSince != "" {
+		if t, err := http.ParseTime(ifModSince); err == nil {
+			if !metadata.LastModified.IsZero() && !metadata.LastModified.After(t) {
+				if metadata.ETag != "" {
+					w.Header().Set("ETag", metadata.ETag)
+				}
+				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+				w.WriteHeader(http.StatusNotModified)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// Utility function to write common headers for S3 object responses
+func writeS3ObjectResponse(w http.ResponseWriter, obj *models.ImageResponse) {
+	if obj == nil {
+		return
+	}
+	// set headers - note we don't need to set the cache-control as the middleware handles that
 	w.Header().Set("Content-Type", obj.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(obj.Length, 10))
 
@@ -266,5 +241,4 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 	}
 
 	_, _ = w.Write(obj.Data)
-
 }
