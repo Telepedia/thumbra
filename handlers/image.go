@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/telepedia/thumbra/models"
+	"github.com/telepedia/thumbra/public"
 	"github.com/telepedia/thumbra/services"
 	"github.com/telepedia/thumbra/storage"
 	"github.com/telepedia/thumbra/utils"
@@ -23,6 +28,21 @@ func NewImageHandler(s3Client *storage.S3Client) *ImageHandler {
 		s3Client:     s3Client,
 		imageService: services.NewImageService(s3Client),
 	}
+}
+
+var placeholderImage = &models.ImageResponse{
+	ContentType: "image/webp",
+	Data:        public.PlaceholderData,
+	Length:      int64(len(public.PlaceholderData)),
+}
+
+func writePlaceholderResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", placeholderImage.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(placeholderImage.Length, 10))
+	// cache these for an hour
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(placeholderImage.Data)
 }
 
 // Serve the original image back to the caller
@@ -46,7 +66,7 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 	// validate that the request URL was actually valid
 	err := utils.ValidateImageRequest(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -54,10 +74,12 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 	metadata, err := h.imageService.GetImageMetadata(req)
 	if err != nil {
 		if err == services.ErrImageNotFound {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			log.Printf("image not found: %s/%s", req.Wiki, req.Filename)
+			writePlaceholderResponse(w)
 			return
 		}
-		http.Error(w, "Failed to retrieve image metadata", http.StatusInternalServerError)
+		log.Printf("failed to retrieve image metadata: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 		return
 	}
 
@@ -70,10 +92,12 @@ func (h *ImageHandler) serveImage(w http.ResponseWriter, r *http.Request, req mo
 	obj, err := h.imageService.GetOriginalImage(req)
 	if err != nil {
 		if err == services.ErrImageNotFound {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			log.Printf("image not found: %s/%s", req.Wiki, req.Filename)
+			writePlaceholderResponse(w)
 			return
 		}
-		http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
+		log.Printf("failed to retrieve image: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 		return
 	}
 
@@ -93,6 +117,23 @@ func (h *ImageHandler) ServeThumbnail(w http.ResponseWriter, r *http.Request) {
 		Width:    vars["width"],
 	}
 
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(req.Filename), "."))
+	if !utils.SupportedThumbFormats[ext] {
+		// this is a pass through format, we need to return the original,
+		// since we cannot thumbnail it
+		// @TODO: maybe instead we move this to the thumb generation bit?
+		model := models.ImageRequest{
+			Wiki:     req.Wiki,
+			Hash1:    req.Hash1,
+			Hash2:    req.Hash2,
+			Filename: req.Filename,
+			Revision: req.Revision,
+		}
+		h.serveImage(w, r, model)
+		return
+	}
+
+	// we can thumbnail this type of file, so generate the thumbnail
 	h.serveThumbnail(w, r, req)
 }
 
@@ -123,10 +164,12 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 			obj, err := h.imageService.GetOriginalImage(model)
 			if err != nil {
 				if err == services.ErrImageNotFound {
-					http.Error(w, "Image not found", http.StatusNotFound)
+					log.Printf("image not found: %s/%s", req.Wiki, req.Filename)
+					writePlaceholderResponse(w)
 					return
 				}
-				http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
+				log.Printf("Failed to retrieve original image during thumbnail process: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 				return
 			}
 
@@ -134,10 +177,13 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 			// this function saves the thumbnail to the temp dir and returns the path. It is this functions
 			// responsibility to upload the thumbnail to S3
 			path, err := h.imageService.ThumbnailImage(req, obj)
+
 			if err != nil {
-				http.Error(w, "Failed to generate thumbnail", http.StatusInternalServerError)
+				log.Printf("Failed to generate thumbnail: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "An erorr occurred generating the thumbnail, please try again later.")
 				return
 			}
+
 			// delete temp file when this func finishes
 			// @TODO: this is a rough draft - we need to handle this better and split out a lot of
 			// this into utility functions, but also remove a lot of the duplicated code
@@ -146,14 +192,16 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 			// Upload the thumbnail to S3
 			err = h.imageService.UploadThumbnail(req, path)
 			if err != nil {
-				http.Error(w, "Failed to upload thumbnail", http.StatusInternalServerError)
+				log.Printf("Failed to upload thumbnail to S3: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 				return
 			}
 
 			// serve the thumbnail we just created
 			thumbObj, err := h.imageService.GetThumbnail(req)
 			if err != nil {
-				http.Error(w, "Failed to retrieve thumbnail", http.StatusInternalServerError)
+				log.Printf("Failed to retrieve thumbnail after upload: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 				return
 			}
 
@@ -174,10 +222,12 @@ func (h *ImageHandler) serveThumbnail(w http.ResponseWriter, r *http.Request, re
 
 	if err != nil {
 		if err == services.ErrImageNotFound {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			log.Printf("thumbnail should exist but was not found: %s/%s", req.Wiki, req.Filename)
+			writePlaceholderResponse(w)
 			return
 		}
-		http.Error(w, "Failed to retrieve image", http.StatusInternalServerError)
+		log.Printf("failed to retrieve thumbnail: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "An erorr occurred, please try again later.")
 		return
 	}
 
@@ -200,6 +250,7 @@ func checkConditionalGet(w http.ResponseWriter, r *http.Request, metadata *model
 			if !metadata.LastModified.IsZero() {
 				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
 			}
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			w.WriteHeader(http.StatusNotModified)
 			return true
 		}
@@ -212,6 +263,7 @@ func checkConditionalGet(w http.ResponseWriter, r *http.Request, metadata *model
 					w.Header().Set("ETag", metadata.ETag)
 				}
 				w.Header().Set("Last-Modified", metadata.LastModified.UTC().Format(http.TimeFormat))
+				w.Header().Set("Cache-Control", "public, max-age=31536000")
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}
@@ -226,9 +278,10 @@ func writeS3ObjectResponse(w http.ResponseWriter, obj *models.ImageResponse) {
 	if obj == nil {
 		return
 	}
-	// set headers - note we don't need to set the cache-control as the middleware handles that
+	// set headers
 	w.Header().Set("Content-Type", obj.ContentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(obj.Length, 10))
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
 
 	if obj.ETag != "" {
 		w.Header().Set("ETag", obj.ETag)
@@ -241,4 +294,15 @@ func writeS3ObjectResponse(w http.ResponseWriter, obj *models.ImageResponse) {
 	}
 
 	_, _ = w.Write(obj.Data)
+}
+
+// Utility function to write JSON error responses
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	resp := map[string]string{
+		"error": message,
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
