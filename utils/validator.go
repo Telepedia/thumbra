@@ -8,24 +8,22 @@ import (
 )
 
 var (
-	ErrInvalidWiki     = fmt.Errorf("invalid wiki name")
-	ErrInvalidHash     = fmt.Errorf("invalid hash structure")
-	ErrInvalidFileName = fmt.Errorf("invalid file name")
-	ErrInvalidRevision = fmt.Errorf("invalid revision")
+	ErrInvalidWiki     = fmt.Errorf("wiki name is malformed")
+	ErrInvalidHash     = fmt.Errorf("hash is malformed")
+	ErrInvalidFileName = fmt.Errorf("filename is malformed")
+	ErrInvalidRevision = fmt.Errorf("revision is malformed or missing")
 	ErrInvalidWidth    = fmt.Errorf("invalid width")
 	ErrInvalidHeight   = fmt.Errorf("invalid height")
 )
 
-// Supported file extensions that can be thumbnailed
-// if we get a request for a thumbnail and the original file
-// is not in the below list, we return a placeholder
-// var supportedThumbTypes = []string{
-// 	"png",
-// 	"jpg",
-// 	"jpeg",
-// 	"gif",
-// 	"webp",
-// }
+// Raster formats that support thumbnails; others, we will passthrough, and return the original
+var SupportedThumbFormats = map[string]bool{
+	"jpg":  true,
+	"jpeg": true,
+	"png":  true,
+	"gif":  true,
+	"webp": true,
+}
 
 // validate that the request is valid and correctly formed
 func ValidateImageRequest(req models.ImageRequest) error {

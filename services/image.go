@@ -56,9 +56,6 @@ func (is *ImageService) GetImageMetadata(req models.ImageRequest) (*models.Image
 	defer cancel()
 
 	s3Key := is.s3KeyForImage(req)
-	if req.Revision != "latest" {
-		log.Println("S3Key", s3Key)
-	}
 
 	return is.headObjectByKey(ctx, s3Key)
 }
@@ -118,7 +115,7 @@ func (is *ImageService) ThumbnailImage(req models.ThumbnailRequest, obj *models.
 		return "", fmt.Errorf("error when converting the width to an int: %s", req.Width)
 	}
 
-	if requestWidth >= origWidth {
+	if requestWidth > origWidth {
 		return "", ErrWidthTooLarge
 	}
 
